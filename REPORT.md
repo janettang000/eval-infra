@@ -12,7 +12,7 @@
 |------------------------|-----------|-----------------|-------|--------|
 | MATH-500 (200 samples) | 74.0%    | 75.5%           | -1.5% | OK     |
 | GSM8K (200 samples)    | 93.0%    | 91.6%           | +1.4% | OK     |
-| MMLU abstract_algebra  | 74.0%    | 75.4% (MMLU-redux) | -1.4% | OK (see notes) |
+| MMLU (5 subjects, 939) | 84.0%    | 75.4% (MMLU-redux) | +8.6% | OK (see notes)  |
 | HumanEval (164 full)   | 81.1%    | 84.8%           | -3.7%  | OK     |
 
 ## Detailed Results
@@ -36,14 +36,25 @@
 - **Scorer:** NumericScorer (numeric comparison with float tolerance)
 - **Notes:** The reference uses 4-shot prompting; ours is zero-shot. All 14 failures were model reasoning errors, not parser/scorer bugs. Our score slightly exceeds reference, likely due to sampling variance on 200 samples.
 
-### MMLU (abstract_algebra)
+### MMLU (5 subjects)
 
-- **Accuracy:** 74/100 = 74.0%
+- **Aggregate accuracy:** 789/939 = 84.0%
 - **Reference:** 75.4% MMLU-redux aggregate (source: [Qwen2.5-LLM blog post](https://qwen.ai/blog?id=qwen2.5-llm), performance table for Qwen2.5-7B-Instruct)
-- **Delta:** -1.4% vs aggregate MMLU-redux
+- **Delta:** +8.6% vs aggregate MMLU-redux
 - **Parser:** MultiChoiceParser (4 extraction strategies for A/B/C/D answers)
 - **Scorer:** ExactMatchScorer (case-insensitive)
-- **Notes:** Direct comparison is approximate: (1) our evaluation covers only the abstract_algebra subject (100 samples) while the reference is the aggregate across all MMLU subjects; (2) the reference uses MMLU-redux (a cleaned version) while we use standard `cais/mmlu`; (3) the reference uses 5-shot prompting while ours is zero-shot.
+- **Per-subject breakdown:**
+
+| Subject | Correct | Total | Accuracy |
+|---------|---------|-------|----------|
+| abstract_algebra | 73 | 100 | 73.0% |
+| high_school_mathematics | 246 | 270 | 91.1% |
+| high_school_computer_science | 91 | 100 | 91.0% |
+| high_school_us_history | 165 | 204 | 80.9% |
+| clinical_knowledge | 214 | 265 | 80.8% |
+| **Aggregate** | **789** | **939** | **84.0%** |
+
+- **Notes:** Our 84.0% aggregate exceeds the 75.4% MMLU-redux reference because our 5 subjects skew toward areas where Qwen2.5-7B excels (math and CS at 91%), while the reference is an aggregate across all 57 MMLU subjects including weaker areas. The reference also uses MMLU-redux (a cleaned variant) with 5-shot prompting, while ours uses standard `cais/mmlu` with zero-shot chat. The `--subject` flag accepts comma-separated subjects (e.g., `--subject "abstract_algebra,clinical_knowledge"`) for multi-subject evaluation with automatic per-subject breakdown.
 
 ### HumanEval
 
@@ -54,9 +65,46 @@
 - **Scorer:** CodeExecutionScorer (sandboxed subprocess, 10s timeout)
 - **Prompt:** Simple "Complete the following function. Return only the code, no explanations." with raw HumanEval prompt as user message (EvalPlus-style). Stop sequences: `["\nclass ", "\nif __name__"]`.
 - **Assembly:** Detects whether model gave complete function (with `def`) or just body. When model gives full function, prepends preamble from prompt (imports + helper functions). When model gives body only, appends indented body to prompt code.
-- **Failure analysis:** 31 failures: 27 model logic errors (assertion failures), 1 NameError, 1 timeout, 2 other runtime errors. All SyntaxError and import-related failures from the previous version (62.8%) are resolved.
-- **Previous score:** 62.8% (103/164) — improved by fixing prompt format, import handling, and helper function preservation.
+- **Failure analysis:** 31 failures: 27 model logic errors (assertion failures), 1 NameError, 1 timeout, 2 other runtime errors. No SyntaxError or import-related failures.
 - **Remaining gap:** The -3.7% gap vs reference is likely due to chat mode vs completion mode (reference uses infill/completion format where the model continues from the function signature, avoiding any prompt interpretation overhead).
+
+## Cross-Model Compatibility
+
+To demonstrate the framework is model-agnostic, we ran the same GSM8K benchmark with a non-Qwen model using **zero code changes** — only the `--model` CLI argument differs.
+
+### GSM8K — Phi-3.5-mini-instruct
+
+- **Model:** microsoft/Phi-3.5-mini-instruct (3.8B parameters)
+- **Accuracy:** 178/200 = 89.0%
+- **Reference:** 87.4% (source: [Phi-3.5 Technical Report](https://arxiv.org/abs/2404.14219), Table 3)
+- **Delta:** +1.6% (within expected variance)
+
+**Command comparison (only the model name changes):**
+```bash
+# Qwen run:
+python -m eval_infra --model Qwen/Qwen2.5-7B-Instruct --task gsm8k ...
+# Phi run:
+python -m eval_infra --model microsoft/Phi-3.5-mini-instruct --task gsm8k ...
+```
+
+**Key takeaway:** The framework handles different model architectures (Qwen2, Phi-3), tokenizers, and chat templates transparently via sglang + HuggingFace transformers. No task code, parser, scorer, or runner required any modification.
+
+| Model | Family | Params | GSM8K | Reference | Delta |
+|-------|--------|--------|-------|-----------|-------|
+| Qwen/Qwen2.5-7B-Instruct | Qwen2 | 7B | 93.0% (n=200) | 91.6% | +1.4% |
+| microsoft/Phi-3.5-mini-instruct | Phi-3 | 3.8B | 89.0% (n=200) | 87.4% | +1.6% |
+| Qwen/Qwen2.5-32B-Instruct | Qwen2 | 32B | 96.0% (n=100) | 95.2% | +0.8% |
+
+### GSM8K — Qwen2.5-32B-Instruct (large model, single GPU)
+
+- **Model:** Qwen/Qwen2.5-32B-Instruct (32B parameters)
+- **Accuracy:** 96/100 = 96.0%
+- **Reference:** 95.2% (source: [Qwen2.5-LLM blog post](https://qwen.ai/blog?id=qwen2.5-llm), performance table for Qwen2.5-32B-Instruct)
+- **Delta:** +0.8% (within expected variance)
+- **GPU memory:** ~63 GB for model weights (bfloat16) on a single NVIDIA H200 (141 GB VRAM), leaving ~78 GB for KV cache and activations
+- **Special flags needed:** None — loaded with default settings (`dtype=auto` resolves to bfloat16, `tp_size=1`)
+- **Inference time:** 20.2s for 100 samples (vs 3.5s for 7B on 200 samples)
+- **Notes:** Demonstrates the framework supports models up to 32B on a single GPU with zero code changes. The 32B model scores 3 percentage points higher than the 7B on GSM8K, as expected.
 
 ## Results Files
 
@@ -66,8 +114,10 @@ All results are stored in `results/` with full per-sample details:
 |------|---------|------|
 | `results/math_results.json` | 200 | 368KB |
 | `results/gsm8k_results.json` | 200 | 283KB |
-| `results/mmlu_results.json` | 100 | 180KB |
+| `results/mmlu_results.json` | 939 | — |
 | `results/humaneval_results.json` | 164 | 519KB |
+| `results/gsm8k_phi_results.json` | 200 | — |
+| `results/gsm8k_32b_results.json` | 100 | — |
 
 Each JSON file contains per-sample `raw_output`, `predicted`, `expected`, `correct`, and task-specific `metadata` (category, level, execution traces, etc.).
 

@@ -18,32 +18,32 @@ class MMLUTask(Task):
     name = "mmlu"
 
     def __init__(self, subject: str = "abstract_algebra", **kwargs):
-        self.subject = subject
+        self.subjects = [s.strip() for s in subject.split(",")]
         self.parser = MultiChoiceParser()
         self.scorer = ExactMatchScorer()
 
     def load_dataset(self, max_samples: int | None = None) -> list[Sample]:
-        ds = load_dataset("cais/mmlu", self.subject, split="test")
-
         samples: list[Sample] = []
-        for i, row in enumerate(ds):
-            if max_samples is not None and i >= max_samples:
-                break
-            answer_idx = row["answer"]
-            answer_letter = CHOICE_LETTERS[answer_idx]
-            choices_text = "\n".join(
-                f"{CHOICE_LETTERS[j]}. {row['choices'][j]}" for j in range(len(row["choices"]))
-            )
-            samples.append(Sample(
-                id=f"{self.subject}/{i}",
-                prompt=f"{row['question']}\n\n{choices_text}",
-                expected_answer=answer_letter,
-                metadata={
-                    "type": row.get("subject", self.subject),
-                    "choices": row["choices"],
-                    "answer_idx": answer_idx,
-                },
-            ))
+        for subject in self.subjects:
+            ds = load_dataset("cais/mmlu", subject, split="test")
+            for i, row in enumerate(ds):
+                if max_samples is not None and len(samples) >= max_samples:
+                    return samples
+                answer_idx = row["answer"]
+                answer_letter = CHOICE_LETTERS[answer_idx]
+                choices_text = "\n".join(
+                    f"{CHOICE_LETTERS[j]}. {row['choices'][j]}" for j in range(len(row["choices"]))
+                )
+                samples.append(Sample(
+                    id=f"{subject}/{i}",
+                    prompt=f"{row['question']}\n\n{choices_text}",
+                    expected_answer=answer_letter,
+                    metadata={
+                        "type": subject,
+                        "choices": row["choices"],
+                        "answer_idx": answer_idx,
+                    },
+                ))
         return samples
 
     def format_prompt(self, sample: Sample) -> list[dict[str, str]]:
