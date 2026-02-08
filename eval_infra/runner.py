@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -45,6 +46,8 @@ class EvalResult:
 
 
 class Runner:
+    """Standard batch evaluation runner: generate -> parse -> score -> aggregate."""
+
     def __init__(self, engine: Engine, task: Task):
         self.engine = engine
         self.task = task
@@ -231,8 +234,6 @@ class AgenticRunner:
     def _extract_tool_calls(self, text: str) -> list[dict[str, Any]]:
         """Extract tool calls from model output. Expects JSON blocks with tool_call markers."""
         calls = []
-        # Look for ```tool_call ... ``` blocks
-        import re
         pattern = r"```tool_call\s*\n(.*?)\n```"
         matches = re.findall(pattern, text, re.DOTALL)
         for match in matches:

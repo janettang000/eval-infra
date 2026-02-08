@@ -21,6 +21,7 @@ class Engine:
         max_new_tokens: int = 2048,
         **kwargs: Any,
     ) -> list[str]:
+        """Run batch text completion on raw string prompts."""
         sampling_params = {"temperature": temperature, "max_new_tokens": max_new_tokens, **kwargs}
         outputs = self._engine.generate(prompts, sampling_params)
         return [o["text"] for o in outputs]
@@ -32,7 +33,7 @@ class Engine:
         max_new_tokens: int = 2048,
         **kwargs: Any,
     ) -> list[str]:
-        # Apply chat template to convert messages to strings
+        """Run batch chat completion, applying the model's chat template."""
         prompts = [
             self._tokenizer.apply_chat_template(
                 msgs, tokenize=False, add_generation_prompt=True
