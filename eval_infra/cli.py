@@ -69,6 +69,15 @@ def main(argv: list[str] | None = None) -> None:
                 max_new_tokens=args.max_tokens,
                 max_turns=args.max_turns,
             )
+        elif args.task == "humaneval":
+            from eval_infra.runners.humaneval_runner import HumanEvalRunner
+            runner = HumanEvalRunner(engine, task)
+            result = runner.run(
+                max_samples=args.max_samples,
+                temperature=args.temperature,
+                max_new_tokens=args.max_tokens,
+                batch_size=args.batch_size,
+            )
         else:
             runner = Runner(engine, task)
             result = runner.run(
