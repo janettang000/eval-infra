@@ -40,9 +40,15 @@ class HumanEvalRunner(Runner):
         for i in range(0, len(prompts), batch_size):
             batch = prompts[i : i + batch_size]
             if isinstance(batch[0], list):
-                outputs = self.engine.chat(batch, temperature=temperature, max_new_tokens=max_new_tokens)
+                outputs = self.engine.chat(
+                    batch, temperature=temperature, max_new_tokens=max_new_tokens,
+                    stop=HumanEvalTask.STOP_SEQUENCES,
+                )
             else:
-                outputs = self.engine.generate(batch, temperature=temperature, max_new_tokens=max_new_tokens)
+                outputs = self.engine.generate(
+                    batch, temperature=temperature, max_new_tokens=max_new_tokens,
+                    stop=HumanEvalTask.STOP_SEQUENCES,
+                )
             all_outputs.extend(outputs)
 
         elapsed = time.time() - start

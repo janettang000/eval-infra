@@ -9,9 +9,8 @@ from eval_infra.scorers.code_execution import CodeExecutionScorer
 from eval_infra.tasks.base import Sample, Task
 
 HUMANEVAL_SYSTEM_PROMPT = (
-    "You are an expert Python programmer. Complete the function below. "
-    "Only output the function body (the code that goes after the docstring). "
-    "Do not repeat the function signature or docstring. Do not add any explanation."
+    "You are an expert Python programmer. "
+    "Complete the following function. Return only the code, no explanations."
 )
 
 
@@ -26,6 +25,8 @@ class HumanEvalTask(Task):
     """
 
     name = "humaneval"
+
+    STOP_SEQUENCES = ["\nclass ", "\nif __name__"]
 
     def __init__(self, timeout: int = 10, **kwargs):
         self.parser = PythonCodeParser()
@@ -54,11 +55,7 @@ class HumanEvalTask(Task):
     def format_prompt(self, sample: Sample) -> list[dict[str, str]]:
         return [
             {"role": "system", "content": HUMANEVAL_SYSTEM_PROMPT},
-            {"role": "user", "content": (
-                "Complete this function:\n\n"
-                f"```python\n{sample.prompt}```\n\n"
-                "Write only the function body."
-            )},
+            {"role": "user", "content": sample.prompt},
         ]
 
     def assemble_program(self, sample: Sample, completion: str) -> str:
@@ -67,11 +64,13 @@ class HumanEvalTask(Task):
         test_code = sample.metadata["test"]
         entry_point = sample.metadata["entry_point"]
 
-        # The completion might be just the body, or might include the full function.
-        # We need to figure out which case and assemble correctly.
+        # Extract preamble from prompt (everything before the target function def)
+        preamble, _ = _split_at_function(prompt_code, entry_point)
+
         if _contains_function_def(completion, entry_point):
-            # Model repeated the full function — use it directly
-            full_function = completion
+            # Model gave full function — prepend prompt preamble (imports + helpers)
+            # Trim any extra top-level defs after the target function
+            full_function = preamble + _trim_after_function(completion, entry_point)
         else:
             # Model gave just the body — indent and append to prompt
             indented = _ensure_indented(completion)
@@ -80,6 +79,40 @@ class HumanEvalTask(Task):
         # Assemble: function + test harness + invocation
         program = full_function + "\n\n" + test_code + f"\n\ncheck({entry_point})\n"
         return program
+
+
+def _split_at_function(code: str, func_name: str) -> tuple[str, str]:
+    """Split code into preamble (everything before the target function) and the rest."""
+    lines = code.split("\n")
+    pattern = re.compile(rf"^def\s+{re.escape(func_name)}\s*\(")
+    for i, line in enumerate(lines):
+        if pattern.match(line):
+            preamble = "\n".join(lines[:i])
+            if preamble.strip():
+                preamble += "\n"
+            else:
+                preamble = ""
+            rest = "\n".join(lines[i:])
+            return preamble, rest
+    return "", code
+
+
+def _trim_after_function(code: str, func_name: str) -> str:
+    """Keep only the target function and any code before the next top-level def/class."""
+    lines = code.split("\n")
+    # Find where the target function starts
+    func_start = None
+    for i, line in enumerate(lines):
+        if re.match(rf"^def\s+{re.escape(func_name)}\s*\(", line):
+            func_start = i
+            break
+    if func_start is None:
+        return code
+    # Find where the next top-level def/class starts (after the target function)
+    for i in range(func_start + 1, len(lines)):
+        if re.match(r"^(def |class )", lines[i]):
+            return "\n".join(lines[:i]).rstrip()
+    return code
 
 
 def _contains_function_def(code: str, func_name: str) -> bool:

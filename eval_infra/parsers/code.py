@@ -5,6 +5,14 @@ import re
 from eval_infra.parsers.base import Parser
 
 
+def _strip_trailing(code: str) -> str:
+    """Strip trailing blank lines and whitespace."""
+    lines = code.split("\n")
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "\n".join(lines)
+
+
 class PythonCodeParser(Parser):
     """Extract a Python function body from model output.
 
@@ -24,12 +32,12 @@ class PythonCodeParser(Parser):
         # Strategy 1: fenced python block
         matches = re.findall(r"```python\s*\n(.*?)```", text, re.DOTALL)
         if matches:
-            return matches[0].rstrip()
+            return _strip_trailing(matches[0])
 
         # Strategy 2: generic fenced block
         matches = re.findall(r"```\s*\n(.*?)```", text, re.DOTALL)
         if matches:
-            return matches[0].rstrip()
+            return _strip_trailing(matches[0])
 
         # Strategy 3: return raw text (strip leading/trailing blank lines)
-        return text.strip()
+        return _strip_trailing(text)

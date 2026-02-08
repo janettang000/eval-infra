@@ -13,14 +13,14 @@
 | MATH-500 (200 samples) | 74.0%    | 75.5%           | -1.5% | OK     |
 | GSM8K (200 samples)    | 93.0%    | 91.6%           | +1.4% | OK     |
 | MMLU abstract_algebra  | 74.0%    | 75.4% (MMLU-redux) | -1.4% | OK (see notes) |
-| HumanEval (164 full)   | 62.8%    | 84.8%           | -22.0% | See notes |
+| HumanEval (164 full)   | 81.1%    | 84.8%           | -3.7%  | OK     |
 
 ## Detailed Results
 
 ### MATH-500
 
 - **Accuracy:** 148/200 = 74.0%
-- **Reference:** 75.5% (source: [Qwen2.5-LLM blog post](https://qwenlm.github.io/blog/qwen2.5-llm/), performance table for Qwen2.5-7B-Instruct)
+- **Reference:** 75.5% (source: [Qwen2.5-LLM blog post](https://qwen.ai/blog?id=qwen2.5-llm), performance table for Qwen2.5-7B-Instruct)
 - **Delta:** -1.5% (within expected variance)
 - **Parser:** MathVerifyParser (boxed extraction + math-verify fallback)
 - **Scorer:** MathEquivalenceScorer (math-verify symbolic checking + normalized string fallback)
@@ -30,7 +30,7 @@
 ### GSM8K
 
 - **Accuracy:** 186/200 = 93.0%
-- **Reference:** 91.6% (source: [Qwen2.5-LLM blog post](https://qwenlm.github.io/blog/qwen2.5-llm/), performance table for Qwen2.5-7B-Instruct)
+- **Reference:** 91.6% (source: [Qwen2.5-LLM blog post](https://qwen.ai/blog?id=qwen2.5-llm), performance table for Qwen2.5-7B-Instruct)
 - **Delta:** +1.4% (within expected variance)
 - **Parser:** NumericParser (4 extraction strategies: ####, \boxed{}, "the answer is", last number)
 - **Scorer:** NumericScorer (numeric comparison with float tolerance)
@@ -39,7 +39,7 @@
 ### MMLU (abstract_algebra)
 
 - **Accuracy:** 74/100 = 74.0%
-- **Reference:** 75.4% MMLU-redux aggregate (source: [Qwen2.5-LLM blog post](https://qwenlm.github.io/blog/qwen2.5-llm/), performance table for Qwen2.5-7B-Instruct)
+- **Reference:** 75.4% MMLU-redux aggregate (source: [Qwen2.5-LLM blog post](https://qwen.ai/blog?id=qwen2.5-llm), performance table for Qwen2.5-7B-Instruct)
 - **Delta:** -1.4% vs aggregate MMLU-redux
 - **Parser:** MultiChoiceParser (4 extraction strategies for A/B/C/D answers)
 - **Scorer:** ExactMatchScorer (case-insensitive)
@@ -47,17 +47,16 @@
 
 ### HumanEval
 
-- **Accuracy (pass@1):** 103/164 = 62.8%
-- **Reference:** 84.8% (source: [Qwen2.5-LLM blog post](https://qwenlm.github.io/blog/qwen2.5-llm/), performance table for Qwen2.5-7B-Instruct)
-- **Delta:** -22.0%
+- **Accuracy (pass@1):** 133/164 = 81.1%
+- **Reference:** 84.8% (source: [Qwen2.5-LLM blog post](https://qwen.ai/blog?id=qwen2.5-llm), performance table for Qwen2.5-7B-Instruct)
+- **Delta:** -3.7%
 - **Parser:** PythonCodeParser (fenced code block extraction)
 - **Scorer:** CodeExecutionScorer (sandboxed subprocess, 10s timeout)
-- **Failure analysis:** 61 failures break down into logic errors, missing-import issues (model repeats function signature with `List[float]` but no `from typing import List`), and indentation mismatches when assembling body-only completions.
-- **Why the gap:**
-  1. **Prompt template:** The reference likely uses HumanEval's standard infill/completion format (provide the function signature, model fills in the body). Our chat-based prompt asks the model to "complete this function" and "write only the function body," which can confuse the model into repeating signatures or omitting imports.
-  2. **Code assembly:** When the model outputs just the body without a function def, our assembler prepends the prompt code. Indentation mismatches cause syntax errors. When the model repeats the full function, missing imports (e.g., `List` from `typing`) cause `NameError`.
-  3. **Evaluation methodology:** The reference may use EvalPlus or OpenAI's original evaluation harness with different prompt formatting and post-processing conventions.
-  4. **No retry/sampling:** We use greedy decoding (pass@1 with temperature=0), which matches the standard methodology, but differences in prompt format have outsized impact on code generation tasks.
+- **Prompt:** Simple "Complete the following function. Return only the code, no explanations." with raw HumanEval prompt as user message (EvalPlus-style). Stop sequences: `["\nclass ", "\nif __name__"]`.
+- **Assembly:** Detects whether model gave complete function (with `def`) or just body. When model gives full function, prepends preamble from prompt (imports + helper functions). When model gives body only, appends indented body to prompt code.
+- **Failure analysis:** 31 failures: 27 model logic errors (assertion failures), 1 NameError, 1 timeout, 2 other runtime errors. All SyntaxError and import-related failures from the previous version (62.8%) are resolved.
+- **Previous score:** 62.8% (103/164) — improved by fixing prompt format, import handling, and helper function preservation.
+- **Remaining gap:** The -3.7% gap vs reference is likely due to chat mode vs completion mode (reference uses infill/completion format where the model continues from the function signature, avoiding any prompt interpretation overhead).
 
 ## Results Files
 
@@ -75,5 +74,5 @@ Each JSON file contains per-sample `raw_output`, `predicted`, `expected`, `corre
 ## References
 
 - Qwen Team. "Qwen2.5 Technical Report." arXiv:2412.15115, December 2024. https://arxiv.org/abs/2412.15115
-- Qwen2.5-LLM blog post. https://qwenlm.github.io/blog/qwen2.5-llm/
+- Qwen2.5-LLM blog post. https://qwen.ai/blog?id=qwen2.5-llm
 - Qwen2.5-7B-Instruct model card. https://huggingface.co/Qwen/Qwen2.5-7B-Instruct
