@@ -22,6 +22,7 @@ def main(argv: list[str] | None = None) -> None:
     # Task-specific options
     parser.add_argument("--subject", type=str, default="abstract_algebra",
                         help="MMLU subject (e.g. abstract_algebra, high_school_mathematics)")
+    parser.add_argument("--level", type=str, default=None, help="Filter by difficulty level, comma-separated (e.g. '4,5' for Level 4-5)")
     parser.add_argument("--max-turns", type=int, default=5, help="Max turns for agentic eval")
     parser.add_argument("--tools", type=str, default="", help="Comma-separated tool names (calculator,python,file_reader)")
 
@@ -51,6 +52,8 @@ def main(argv: list[str] | None = None) -> None:
         task_kwargs: dict = {}
         if args.task == "math":
             task_kwargs["parser"] = args.parser
+            if args.level:
+                task_kwargs["level"] = args.level
         elif args.task == "mmlu":
             task_kwargs["subject"] = args.subject
         elif args.task == "agentic_math":

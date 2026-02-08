@@ -16,19 +16,26 @@ MATH_SYSTEM_PROMPT = (
 class MathTask(Task):
     name = "math"
 
-    def __init__(self, parser: str = "math_verify"):
+    def __init__(self, parser: str = "math_verify", level: str | None = None):
         if parser == "boxed":
             self.parser = BoxedParser()
         else:
             self.parser = MathVerifyParser()
         self.scorer = MathEquivalenceScorer()
+        self.level = level  # e.g. "4,5" to filter Level 4-5 only
 
     def load_dataset(self, max_samples: int | None = None) -> list[Sample]:
         ds = load_dataset("HuggingFaceH4/MATH-500", split="test")
+        level_filter = set(self.level.split(",")) if self.level else None
 
         samples: list[Sample] = []
         for i, row in enumerate(ds):
-            if max_samples is not None and i >= max_samples:
+            if level_filter:
+                row_level = str(row.get("level", ""))
+                # Match e.g. "Level 4" against filter {"4", "5"}
+                if not any(lv in row_level for lv in level_filter):
+                    continue
+            if max_samples is not None and len(samples) >= max_samples:
                 break
             answer = row.get("answer") or BoxedParser().parse(row["solution"]) or ""
             samples.append(Sample(

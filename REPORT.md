@@ -14,6 +14,7 @@
 | GSM8K (200 samples)    | 93.0%    | 91.6%           | +1.4% | OK     |
 | MMLU (5 subjects, 939) | 84.0%    | 75.4% (MMLU-redux) | +8.6% | OK (see notes)  |
 | HumanEval (164 full)   | 81.1%    | 84.8%           | -3.7%  | OK     |
+| Agentic MATH (Level 4-5, 262) | 56.1% | 61.1% (standard) | -5.0% | See notes |
 
 ## Detailed Results
 
@@ -106,6 +107,44 @@ python -m eval_infra --model microsoft/Phi-3.5-mini-instruct --task gsm8k ...
 - **Inference time:** 20.2s for 100 samples (vs 3.5s for 7B on 200 samples)
 - **Notes:** Demonstrates the framework supports models up to 32B on a single GPU with zero code changes. The 32B model scores 3 percentage points higher than the 7B on GSM8K, as expected.
 
+## Agentic Evaluation (Tool Use)
+
+The framework supports multi-turn agentic evaluation where the model can call tools (calculator, Python executor) during problem solving. We compare standard single-turn math evaluation against agentic multi-turn evaluation on the same MATH-500 Level 4-5 subset (262 problems).
+
+### MATH-500 Level 4-5 — Standard vs Agentic
+
+| Mode | Accuracy | Tools Used | Time |
+|------|----------|------------|------|
+| Standard (single-turn) | 160/262 = 61.1% | N/A | 5.5s (batched) |
+| Agentic (multi-turn, calculator+python) | 147/262 = 56.1% | 6/262 samples | 882.1s (sequential) |
+
+**Per-category comparison:**
+
+| Category | Standard | Agentic | Delta |
+|----------|----------|---------|-------|
+| Algebra | 51/60 = 85.0% | 49/60 = 81.7% | -3.3% |
+| Counting & Probability | 15/25 = 60.0% | 15/25 = 60.0% | 0.0% |
+| Geometry | 11/23 = 47.8% | 10/23 = 43.5% | -4.3% |
+| Intermediate Algebra | 21/59 = 35.6% | 17/59 = 28.8% | -6.8% |
+| Number Theory | 20/31 = 64.5% | 19/31 = 61.3% | -3.2% |
+| Prealgebra | 29/39 = 74.4% | 29/39 = 74.4% | 0.0% |
+| Precalculus | 13/25 = 52.0% | 8/25 = 32.0% | -20.0% |
+
+**Key findings:**
+- The 7B model rarely used tools (only 6/262 samples contained `tool_call` markers), preferring to solve problems directly.
+- The agentic prompt overhead (tool descriptions, format instructions) slightly degraded performance (-5.0% overall) without meaningful tool utilization.
+- Sequential per-sample processing (required for multi-turn) was ~160x slower than batched single-turn inference.
+- This suggests that effective agentic math evaluation requires larger models (e.g., 70B+) that can reliably follow tool-use formatting instructions and benefit from computation offloading.
+
+**Architecture:** The `AgenticRunner` implements a multi-turn conversation loop: generate → extract `tool_call` blocks → execute tools → append results → repeat (up to `--max-turns` turns). Tool calls use a fenced code block format (```` ```tool_call ... ``` ````). Available tools are injected via CLI (`--tools "calculator,python"`).
+
+```bash
+# Standard evaluation on Level 4-5:
+python -m eval_infra --model Qwen/Qwen2.5-7B-Instruct --task math --level "4,5"
+# Agentic evaluation on Level 4-5:
+python -m eval_infra --model Qwen/Qwen2.5-7B-Instruct --task agentic_math --tools "calculator,python" --max-turns 5
+```
+
 ## Results Files
 
 All results are stored in `results/` with full per-sample details:
@@ -118,6 +157,8 @@ All results are stored in `results/` with full per-sample details:
 | `results/humaneval_results.json` | 164 | 519KB |
 | `results/gsm8k_phi_results.json` | 200 | — |
 | `results/gsm8k_32b_results.json` | 100 | — |
+| `results/math_level45_results.json` | 262 | — |
+| `results/agentic_math_results.json` | 262 | — |
 
 Each JSON file contains per-sample `raw_output`, `predicted`, `expected`, `correct`, and task-specific `metadata` (category, level, execution traces, etc.).
 
