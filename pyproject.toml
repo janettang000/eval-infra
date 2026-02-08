@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "eval-infra"
+version = "0.1.0"
+description = "Evaluation framework for open-source LLMs using sglang"
+requires-python = ">=3.10"
+dependencies = [
+    "sglang[all]",
+    "datasets",
+    "math-verify[antlr4_13_2]",
+]
