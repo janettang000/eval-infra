@@ -1,6 +1,6 @@
 # eval-infra
 
-A modular evaluation framework for open-source LLMs using [sglang](https://github.com/sgl-project/sglang) as the inference backend.
+A modular evaluation framework for open-source LLMs using [sglang](https://github.com/sgl-project/sglang) as the inference backend. Supports 4 benchmarks, multi-turn agentic evaluation with tool use, and models up to 32B on a single GPU.
 
 ## Quick Start
 
@@ -34,23 +34,27 @@ python -m eval_infra --model Qwen/Qwen2.5-7B-Instruct --task math --max-samples 
 ## CLI Usage
 
 ```bash
-# MATH benchmark (choose parser: boxed or math_verify)
-python -m eval_infra --model Qwen/Qwen2.5-7B-Instruct --task math --parser math_verify --output results/math.json
+# MATH-500 (full or filtered by difficulty level)
+python -m eval_infra --model Qwen/Qwen2.5-7B-Instruct --task math --output results/math.json
+python -m eval_infra --model Qwen/Qwen2.5-7B-Instruct --task math --level "4,5"
 
 # GSM8K
 python -m eval_infra --model Qwen/Qwen2.5-7B-Instruct --task gsm8k --max-samples 200
 
-# MMLU (specify subject)
-python -m eval_infra --model Qwen/Qwen2.5-7B-Instruct --task mmlu --subject abstract_algebra
+# MMLU (single or multiple subjects, comma-separated)
+python -m eval_infra --model Qwen/Qwen2.5-7B-Instruct --task mmlu --subject "abstract_algebra,high_school_mathematics"
 
 # HumanEval (code execution)
 python -m eval_infra --model Qwen/Qwen2.5-7B-Instruct --task humaneval --max-tokens 1024
 
 # Agentic eval with tools
-python -m eval_infra --model Qwen/Qwen2.5-7B-Instruct --task agentic_math --tools calculator,python --max-turns 5
+python -m eval_infra --model Qwen/Qwen2.5-7B-Instruct --task agentic_math --tools "calculator,python" --max-turns 5
+
+# Swap model with zero code changes
+python -m eval_infra --model microsoft/Phi-3.5-mini-instruct --task gsm8k --max-samples 200
 ```
 
-### Key Options
+### CLI Options
 
 | Flag             | Default       | Description                              |
 |------------------|---------------|------------------------------------------|
@@ -62,103 +66,58 @@ python -m eval_infra --model Qwen/Qwen2.5-7B-Instruct --task agentic_math --tool
 | `--batch-size`   | 64            | Batch size for inference                 |
 | `--output`       | stdout        | Output JSON file path                    |
 | `--parser`       | math_verify   | Parser for MATH task (boxed/math_verify) |
+| `--level`        | all           | MATH difficulty filter, comma-separated (e.g. "4,5") |
+| `--subject`      | abstract_algebra | MMLU subject(s), comma-separated      |
+| `--tools`        | *(none)*      | Agentic tools: calculator, python, file_reader |
+| `--max-turns`    | 5             | Max conversation turns for agentic eval  |
 | `--tp`           | 1             | Tensor parallelism degree                |
 
 ## Architecture
 
 ```
 eval_infra/
-    engine.py           # sglang inference wrapper (generate + chat)
-    runner.py           # Runner (batch) + AgenticRunner (multi-turn)
+    engine.py           # sglang wrapper: generate() for strings, chat() for message lists
+    runner.py           # Runner (batch) + AgenticRunner (multi-turn with tool use)
     cli.py              # CLI entry point
-    tasks/
-        base.py         # Task ABC + Sample dataclass
-        math_task.py    # MATH-500 benchmark
-        gsm8k_task.py   # GSM8K benchmark
-        mmlu_task.py    # MMLU benchmark
-        humaneval_task.py  # HumanEval benchmark
-        agentic_task.py # Agentic MATH (multi-turn with tools)
-    parsers/
-        base.py         # Parser ABC
-        boxed.py        # \boxed{} extraction (nested braces)
-        math_verify_parser.py  # math-verify based extraction
-        numeric.py      # Numeric answer extraction (GSM8K)
-        multichoice.py  # Multiple choice A/B/C/D extraction
-        code.py         # Python code block extraction
-    scorers/
-        base.py         # Scorer ABC
-        math_equiv.py   # Math equivalence (math-verify + fallback)
-        numeric.py      # Numeric comparison with tolerance
-        exact_match.py  # Case-insensitive exact match
-        code_execution.py  # Sandboxed subprocess execution
+    tasks/              # Task definitions: dataset loading, prompt formatting, parser/scorer binding
+        math_task.py, gsm8k_task.py, mmlu_task.py, humaneval_task.py, agentic_task.py
+    parsers/            # Answer extraction: \boxed{}, numeric, A/B/C/D, code blocks
+    scorers/            # Answer checking: math equivalence, numeric, exact match, code execution
     runners/
-        humaneval_runner.py  # Extended runner for code execution scoring
-    tools/
-        base.py         # Tool ABC
-        calculator.py   # Safe math expression evaluator
-        code_executor.py  # Python code execution (subprocess)
-        file_reader.py  # Sandboxed file reader
+        humaneval_runner.py  # Extended runner for code assembly + execution scoring
+    tools/              # Agentic tools: calculator, python executor, file reader
 ```
 
-### Key Abstractions
+### Design
 
-- **`Task`** — Defines a benchmark: loads dataset, formats prompts, bundles a parser and scorer.
+- **`Task`** — Loads dataset, formats prompts, bundles a parser and scorer.
 - **`Parser`** — Extracts the answer from model output (e.g., `\boxed{}`, last number, code block).
-- **`Scorer`** — Checks if the predicted answer matches the expected answer.
-- **`Engine`** — Thin wrapper around `sglang.Engine` with `generate()` (string prompts) and `chat()` (message lists with auto chat-template application).
-- **`Runner`** — Orchestrates batch eval: load -> prompt -> generate -> parse -> score -> aggregate.
-
-The Runner is fully generic and contains zero benchmark-specific logic. All task-specific behavior lives in the Task/Parser/Scorer implementations.
+- **`Scorer`** — Checks if predicted answer matches expected answer.
+- **`Engine`** — Thin wrapper around `sglang.Engine`. `generate()` takes string prompts; `chat()` takes message lists and auto-applies the model's chat template.
+- **`Runner`** — Orchestrates batch eval: load → prompt → generate → parse → score → aggregate. Contains zero benchmark-specific logic.
+- **`AgenticRunner`** — Multi-turn loop: generate → extract tool calls → execute → append results → repeat.
 
 ## Adding a New Benchmark
 
-To add a new benchmark (e.g., TriviaQA), create these files:
+Create a task, parser (optional — reuse existing if sufficient), and register:
 
-### 1. `eval_infra/parsers/triviaqa_parser.py`
 ```python
-from eval_infra.parsers.base import Parser
-
-class TriviaQAParser(Parser):
-    def parse(self, text: str) -> str | None:
-        # Extract the answer from model output
-        ...
-```
-
-### 2. `eval_infra/scorers/` *(optional — reuse ExactMatchScorer if sufficient)*
-
-### 3. `eval_infra/tasks/triviaqa_task.py`
-```python
-from datasets import load_dataset
-from eval_infra.parsers.triviaqa_parser import TriviaQAParser
-from eval_infra.scorers.exact_match import ExactMatchScorer
-from eval_infra.tasks.base import Sample, Task
-
+# eval_infra/tasks/triviaqa_task.py
 class TriviaQATask(Task):
     name = "triviaqa"
-
     def __init__(self):
         self.parser = TriviaQAParser()
         self.scorer = ExactMatchScorer()
+    def load_dataset(self, max_samples=None) -> list[Sample]: ...
+    def format_prompt(self, sample) -> list[dict[str, str]]: ...
 
-    def load_dataset(self, max_samples=None) -> list[Sample]:
-        ds = load_dataset("trivia_qa", "rc", split="validation")
-        ...
-
-    def format_prompt(self, sample) -> list[dict[str, str]]:
-        return [{"role": "user", "content": f"Answer this: {sample.prompt}"}]
-```
-
-### 4. Register in `eval_infra/tasks/__init__.py`
-```python
-from .triviaqa_task import TriviaQATask
+# eval_infra/tasks/__init__.py
 TASK_REGISTRY["triviaqa"] = TriviaQATask
 ```
 
-That's it. No changes to `runner.py`, `engine.py`, or any core files.
+No changes to `runner.py`, `engine.py`, or any core files.
 
 ## Output Format
-
-Results JSON contains both aggregate metrics and per-sample details:
 
 ```json
 {
@@ -167,18 +126,9 @@ Results JSON contains both aggregate metrics and per-sample details:
   "accuracy": 0.74,
   "total": 200,
   "correct": 148,
-  "per_category": {"Algebra": {"total": 40, "correct": 35, "accuracy": 0.875}, ...},
+  "per_category": {"Algebra": {"total": 40, "correct": 35, "accuracy": 0.875}},
   "elapsed_seconds": 12.3,
-  "samples": [
-    {
-      "id": "test/algebra/123.json",
-      "expected": "42",
-      "predicted": "42",
-      "raw_output": "Let me solve this step by step...",
-      "correct": true,
-      "metadata": {"type": "Algebra", "level": 3}
-    }
-  ]
+  "samples": [{"id": "...", "expected": "42", "predicted": "42", "raw_output": "...", "correct": true, "metadata": {...}}]
 }
 ```
 
