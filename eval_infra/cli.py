@@ -10,16 +10,18 @@ def main(argv: list[str] | None = None) -> None:
         description="Eval Infrastructure — run LLM benchmarks with sglang",
     )
     parser.add_argument("--model", required=True, help="HuggingFace model path or local path")
-    parser.add_argument("--task", required=True, choices=["math", "agentic_math"], help="Benchmark task to run")
+    parser.add_argument("--task", required=True, help="Benchmark task to run (math, gsm8k, mmlu, agentic_math)")
     parser.add_argument("--max-samples", type=int, default=None, help="Max samples to evaluate")
     parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature")
     parser.add_argument("--max-tokens", type=int, default=2048, help="Max new tokens per generation")
     parser.add_argument("--batch-size", type=int, default=64, help="Batch size for inference")
     parser.add_argument("--output", type=str, default=None, help="Output JSON file path")
     parser.add_argument("--parser", type=str, default="math_verify", choices=["boxed", "math_verify"],
-                        help="Parser to use for answer extraction")
+                        help="Parser to use for answer extraction (math task only)")
 
-    # Agentic options
+    # Task-specific options
+    parser.add_argument("--subject", type=str, default="abstract_algebra",
+                        help="MMLU subject (e.g. abstract_algebra, high_school_mathematics)")
     parser.add_argument("--max-turns", type=int, default=5, help="Max turns for agentic eval")
     parser.add_argument("--tools", type=str, default="", help="Comma-separated tool names (calculator,python,file_reader)")
 
@@ -33,6 +35,9 @@ def main(argv: list[str] | None = None) -> None:
     from eval_infra.tasks import TASK_REGISTRY
     from eval_infra.tools import TOOL_REGISTRY
 
+    if args.task not in TASK_REGISTRY:
+        parser.error(f"Unknown task '{args.task}'. Available: {', '.join(TASK_REGISTRY.keys())}")
+
     # Build engine
     engine_kwargs = {}
     if args.tp > 1:
@@ -40,14 +45,23 @@ def main(argv: list[str] | None = None) -> None:
     engine = Engine(args.model, **engine_kwargs)
 
     try:
-        if args.task == "agentic_math":
-            # Build tools
+        task_cls = TASK_REGISTRY[args.task]
+
+        # Build task with task-specific kwargs
+        task_kwargs: dict = {}
+        if args.task == "math":
+            task_kwargs["parser"] = args.parser
+        elif args.task == "mmlu":
+            task_kwargs["subject"] = args.subject
+        elif args.task == "agentic_math":
             tool_names = [t.strip() for t in args.tools.split(",") if t.strip()]
             tools = [TOOL_REGISTRY[name]() for name in tool_names if name in TOOL_REGISTRY]
+            task_kwargs["tools"] = tools
 
-            task_cls = TASK_REGISTRY[args.task]
-            task = task_cls(tools=tools)
+        task = task_cls(**task_kwargs)
 
+        # Build runner
+        if args.task == "agentic_math":
             runner = AgenticRunner(engine, task, tools)
             result = runner.run(
                 max_samples=args.max_samples,
@@ -56,9 +70,6 @@ def main(argv: list[str] | None = None) -> None:
                 max_turns=args.max_turns,
             )
         else:
-            task_cls = TASK_REGISTRY[args.task]
-            task = task_cls(parser=args.parser)
-
             runner = Runner(engine, task)
             result = runner.run(
                 max_samples=args.max_samples,
