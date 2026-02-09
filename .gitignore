@@ -7,8 +7,7 @@ dist/
 build/
 *.eggs/
 
-# Eval results (runtime-generated)
-results/
+# Smoke test results (runtime-generated)
 *.json
 !pyproject.toml
 
